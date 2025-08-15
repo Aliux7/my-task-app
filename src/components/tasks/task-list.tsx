@@ -58,8 +58,7 @@ export function TaskList() {
 
   const router = useRouter();
   const searchParams = useSearchParams();
-
-  // Get current page and status from URL params
+ 
   const currentPage = Number.parseInt(searchParams.get("page") || "1");
   const currentStatus = searchParams.get("status") || "all";
 

@@ -1,4 +1,5 @@
 import { TaskList } from "@/components/tasks/task-list";
+import { Suspense } from "react";
 
 export default function HomePage() {
   return (
@@ -10,7 +11,9 @@ export default function HomePage() {
             Manage your tasks efficiently
           </p>
         </div>
-        <TaskList key={1} /> 
+        <Suspense fallback={<div>Loading tasks...</div>}>
+          <TaskList key={1} />
+        </Suspense>
       </div>
     </div>
   );
