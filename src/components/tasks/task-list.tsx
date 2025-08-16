@@ -22,9 +22,18 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Edit, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Plus,
+  Edit,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  List,
+  LayoutGrid,
+} from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { deleteTask, fetchTasks } from "@/lib/backend-api/task";
 
 interface Task {
   id: string;
@@ -33,16 +42,6 @@ interface Task {
   status: "TO_DO" | "IN_PROGRESS" | "DONE";
   createdAt: string;
   updatedAt: string;
-}
-
-interface TasksResponse {
-  tasks: Task[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
 }
 
 export function TaskList() {
@@ -55,40 +54,33 @@ export function TaskList() {
     totalPages: 0,
   });
   const [statusFilter, setStatusFilter] = useState<string>("all");
-
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const router = useRouter();
   const searchParams = useSearchParams();
- 
+
   const currentPage = Number.parseInt(searchParams.get("page") || "1");
   const currentStatus = searchParams.get("status") || "all";
 
+  const tasksByStatus = {
+    TO_DO: tasks.filter((task) => task.status === "TO_DO"),
+    IN_PROGRESS: tasks.filter((task) => task.status === "IN_PROGRESS"),
+    DONE: tasks.filter((task) => task.status === "DONE"),
+  };
+
   useEffect(() => {
     setStatusFilter(currentStatus);
-    fetchTasks(currentPage, currentStatus);
+    loadTasks(currentPage, currentStatus);
   }, [currentPage, currentStatus]);
 
-  const fetchTasks = async (page = 1, status = "all") => {
+  const loadTasks = async (page = 1, status = "all") => {
     try {
       setLoading(true);
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: "10",
-      });
 
-      if (status !== "all") {
-        params.append("status", status);
-      }
+      const result = await fetchTasks(page, status);
 
-      const response = await fetch(`/api/tasks?${params}`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch tasks");
-      }
-
-      const data: TasksResponse = await response.json();
-      setTasks(data.tasks);
-      setPagination(data.pagination);
+      setTasks(result?.data);
+      setPagination(result);
     } catch (error) {
-      console.error("Error fetching tasks:", error);
       toast.error("Failed to fetch tasks. Please try again.");
     } finally {
       setLoading(false);
@@ -102,7 +94,7 @@ export function TaskList() {
     } else {
       params.set("status", status);
     }
-    params.set("page", "1"); // Reset to first page when filtering
+    params.set("page", "1");
     router.push(`/?${params.toString()}`);
   };
 
@@ -114,23 +106,25 @@ export function TaskList() {
 
   const handleDeleteTask = async (taskId: string) => {
     try {
-      const response = await fetch(`/api/tasks/${taskId}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to delete task");
-      }
+      await deleteTask(taskId);
 
       toast.success("Task deleted successfully.");
 
-      // Refresh the task list
-      fetchTasks(currentPage, currentStatus);
+      loadTasks(currentPage, currentStatus);
     } catch (error) {
-      console.error("Error deleting task:", error);
       toast.error("Failed to delete task. Please try again.");
     }
   };
+
+  const statusColumns = [
+    { key: "TO_DO" as const, title: "To Do", tasks: tasksByStatus.TO_DO },
+    {
+      key: "IN_PROGRESS" as const,
+      title: "In Progress",
+      tasks: tasksByStatus.IN_PROGRESS,
+    },
+    { key: "DONE" as const, title: "Done", tasks: tasksByStatus.DONE },
+  ];
 
   const getStatusBadgeVariant = (status: Task["status"]) => {
     switch (status) {
@@ -161,7 +155,7 @@ export function TaskList() {
   if (loading) {
     return (
       <div className="space-y-4">
-        {[...Array(5)].map((_, i) => (
+        {[...Array(5)]?.map((_, i) => (
           <Card key={i} className="animate-pulse">
             <CardContent className="p-6">
               <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
@@ -175,7 +169,6 @@ export function TaskList() {
 
   return (
     <div className="space-y-6">
-      {/* Header with Add Task button and Filter */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <Button
           onClick={() => router.push("/tasks/create")}
@@ -185,26 +178,47 @@ export function TaskList() {
           Add New Task
         </Button>
 
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">
-            Filter by status:
-          </span>
-          <Select value={statusFilter} onValueChange={handleStatusFilter}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Tasks</SelectItem>
-              <SelectItem value="TO_DO">To Do</SelectItem>
-              <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
-              <SelectItem value="DONE">Done</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="flex items- justify-between gap-4">
+          {viewMode === "list" && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                Filter by status:
+              </span>
+              <Select value={currentStatus} onValueChange={handleStatusFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Tasks</SelectItem>
+                  <SelectItem value="TO_DO">To Do</SelectItem>
+                  <SelectItem value="IN_PROGRESS">In Progress</SelectItem>
+                  <SelectItem value="DONE">Done</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="flex items-center border rounded-lg p-1 gap-2">
+            <Button
+              variant={viewMode === "list" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setViewMode("list")}
+              className="h-7 px-3"
+            >
+              <List className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "grid" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setViewMode("grid")}
+              className="h-7 px-3"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* Tasks List */}
-      {tasks.length === 0 ? (
+      {tasks?.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center">
             <p className="text-muted-foreground">
@@ -212,89 +226,263 @@ export function TaskList() {
             </p>
           </CardContent>
         </Card>
+      ) : viewMode === "grid" ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {statusColumns?.map((column: any) => (
+            <div key={column.key} className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-lg">{column.title}</h3>
+                <Badge variant="secondary" className="text-xs">
+                  {column.tasks.length}
+                </Badge>
+              </div>
+              <div className="space-y-3">
+                {column.tasks.length === 0 ? (
+                  <Card className="border-dashed">
+                    <CardContent className="p-6 text-center">
+                      <p className="text-sm text-muted-foreground">
+                        No {column.title.toLowerCase()} tasks
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  column?.tasks?.map((task: Task) => (
+                    <Card
+                      key={task.id}
+                      className="hover:shadow-md transition-shadow"
+                    >
+                      <div className="px-4">
+                        <div className="space-y-3">
+                          <div>
+                            <div className="flex items-start justify-between mb-2">
+                              <h4 className="font-semibold text-sm flex-1">
+                                {task.title}
+                              </h4>
+                              <Badge
+                                variant={getStatusBadgeVariant(task.status)}
+                                className={`${getStatusColor(
+                                  task.status
+                                )} text-xs ml-2 flex-shrink-0`}
+                              >
+                                {task.status.replace("_", " ")}
+                              </Badge>
+                            </div>
+                            {task.description && (
+                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                {task.description}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs text-muted-foreground">
+                              {new Date(task.createdAt).toLocaleDateString()}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => router.push(`/tasks/${task.id}`)}
+                                className="h-7 w-7 p-0 bg-yellow-50 hover:bg-yellow-100 text-yellow-600 hover:text-yellow-700"
+                              >
+                                <Edit className="h-3 w-3 " />
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 w-7 p-0 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      Are you sure?
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This action cannot be undone. This will
+                                      permanently delete your task.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-transparent border-none text-gray-600 hover:text-gray-700">
+                                      Cancel
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="text-red-600 bg-red-100 hover:bg-red-200"
+                                      onClick={() => handleDeleteTask(task.id)}
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="space-y-4">
-          {tasks.map((task) => (
+          {tasks?.map((task) => (
             <Card key={task.id} className="hover:shadow-md transition-shadow">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-2">
-                    <CardTitle className="text-lg">{task.title}</CardTitle>
-                    {task.description && (
-                      <p className="text-sm text-muted-foreground">
-                        {task.description}
-                      </p>
-                    )}
-                  </div>
-                  <Badge
-                    variant={getStatusBadgeVariant(task.status)}
-                    className={getStatusColor(task.status)}
-                  >
-                    {task.status.replace("_", " ")}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs text-muted-foreground">
-                    Created: {new Date(task.createdAt).toLocaleDateString()}
-                    {task.updatedAt !== task.createdAt && (
-                      <span className="ml-2">
-                        • Updated:{" "}
-                        {new Date(task.updatedAt).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => router.push(`/tasks/${task.id}`)}
-                      className="flex items-center gap-1 cursor-pointer bg-purple-50 text-purple-600 border-none hover:text-purple-800 hover:bg-purple-100"
-                    >
-                      <Edit className="h-3 w-3" />
-                      Edit
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
+              {viewMode === "list" ? (
+                <>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-2">
+                        <CardTitle className="text-lg">{task.title}</CardTitle>
+                        {task.description && (
+                          <p className="text-sm text-muted-foreground">
+                            {task.description}
+                          </p>
+                        )}
+                      </div>
+                      <Badge
+                        variant={getStatusBadgeVariant(task.status)}
+                        className={getStatusColor(task.status)}
+                      >
+                        {task.status.replace("_", " ")}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs text-muted-foreground">
+                        Created: {new Date(task.createdAt).toLocaleDateString()}
+                        {task.updatedAt !== task.createdAt && (
+                          <span className="ml-2">
+                            Updated:{" "}
+                            {new Date(task.updatedAt).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
                         <Button
-                          variant="outline"
-                          size="sm"
-                          className="flex items-center gap-1 cursor-pointer bg-red-50 text-red-600 border-none hover:text-red-800 hover:bg-red-100"
+                          variant="ghost"
+                          onClick={() => router.push(`/tasks/${task.id}`)}
+                          className="bg-yellow-50 hover:bg-yellow-100 text-yellow-600 hover:text-yellow-700"
                         >
-                          <Trash2 className="h-3 w-3" />
-                          Delete
+                          <Edit className="h-4 w-4" /> Edit
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Task</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Are you sure you want to delete "{task.title}"? This
-                            action cannot be undone.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel className="border-none shadow-none text-gray-700 hover:gray-800 cursor-pointer">Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => handleDeleteTask(task.id)}
-                            className="cursor-pointer bg-red-50 text-red-600 border border-red-200 hover:text-red-800 hover:bg-red-100"
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              className="bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700"
+                            >
+                              <Trash2 className="h-4 w-4" /> Delete
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This action cannot be undone. This will
+                                permanently delete your task.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="bg-transparent border-none text-gray-600 hover:text-gray-700">
+                                Cancel
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                className="text-red-600 bg-red-100 hover:bg-red-200"
+                                onClick={() => handleDeleteTask(task.id)}
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </div>
+                  </CardContent>
+                </>
+              ) : (
+                <div className="p-4">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-sm truncate">
+                        {task.title}
+                      </h3>
+                      {task.description && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {task.description}
+                        </p>
+                      )}
+                    </div>
+                    <Badge
+                      variant={getStatusBadgeVariant(task.status)}
+                      className={`${getStatusColor(
+                        task.status
+                      )} text-xs ml-2 flex-shrink-0`}
+                    >
+                      {task.status.replace("_", " ")}
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-muted-foreground">
+                      {new Date(task.createdAt).toLocaleDateString()}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push(`/tasks/${task.id}`)}
+                        className="h-7 w-7 p-0"
+                      >
+                        <Edit className="h-3 w-3" />
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 w-7 p-0 bg-transparent"
                           >
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This action cannot be undone. This will
+                              permanently delete your task.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDeleteTask(task.id)}
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </div>
                 </div>
-              </CardContent>
+              )}
             </Card>
           ))}
         </div>
       )}
 
       {/* Pagination */}
-      {pagination.totalPages > 1 && (
+      {pagination?.totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
           <Button
             variant="outline"
@@ -308,7 +496,7 @@ export function TaskList() {
           </Button>
 
           <div className="flex items-center gap-1">
-            {[...Array(pagination.totalPages)].map((_, i) => {
+            {[...Array(pagination.totalPages)]?.map((_, i) => {
               const page = i + 1;
               const isCurrentPage = page === pagination.page;
 
@@ -375,11 +563,11 @@ export function TaskList() {
 
       {/* Pagination Info */}
       <div className="text-center text-sm text-muted-foreground">
-        Showing {tasks.length} of {pagination.total} tasks
-        {pagination.totalPages > 1 && (
+        Showing {tasks?.length} of {pagination?.total} tasks
+        {pagination?.totalPages > 1 && (
           <span>
             {" "}
-            • Page {pagination.page} of {pagination.totalPages}
+            • Page {pagination?.page} of {pagination?.totalPages}
           </span>
         )}
       </div>
